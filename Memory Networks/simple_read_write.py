@@ -14,9 +14,11 @@ class SimpleMemoryNetwork(Module):
 	def __init__(self, input_size, memory_width, memory_length, output_size):
 		super().__init__()
 
+		self._memory_width = memory_width
+		self._memory_length = memory_length
 		scale_factor = .1
 		self._output_weights = Parameter(
-			scale_factor * torch.randn([output_size, 2 * input_size]),
+			scale_factor * torch.randn([output_size, memory_width + input_size]),
 			requires_grad=True
 		)
 		self._output_biases = Parameter(
@@ -39,7 +41,7 @@ class SimpleMemoryNetwork(Module):
 			scale_factor * torch.randn([memory_length]), 
 			requires_grad=True
 		)
-		self._wirte_vector_weights = Parameter(
+		self._write_vector_weights = Parameter(
 			scale_factor * torch.randn([memory_width, memory_width + input_size]), 
 			requires_grad=True
 		)
@@ -51,14 +53,18 @@ class SimpleMemoryNetwork(Module):
 		self._prev_read = Variable(scale_factor * torch.randn([memory_width]))
 
 	def forward(self, x):
-		total_input = torch.cat(x, self._prev_read)
-		out = sigmoid(self._output_key_weights * total_input + self._output_key_biases)
-		read_key = softmax(self._read_key_weights * total_input + self._read_key_biases)
-		write_key = softmax(self._write_vector_weights * total_input + self._vector_key_biases)
-		write_vector = softmax(self._write_vector_weights * total_input + self._vector_key_biases)
-		# TODO: test / fix this.
-		self._prev_read = torch.dot(self.memory, read_key)
-		self._memory = torch.dot(self._memory, 1 - write_key) + 
-				(write_key * torch.transpose(write_vector)) # make sure this term is the "outer" product
+		total_input = torch.cat([x, self._prev_read])
+		out = sigmoid(torch.mv(self._output_weights, total_input) + self._output_biases)
+		read_key = softmax(torch.mv(self._read_key_weights, total_input) + self._read_key_biases)
+		write_key = softmax(torch.mv(self._write_key_weights, total_input) + self._write_key_biases)
+		write_vector = softmax(torch.mv(self._write_vector_weights, total_input) + self._write_vector_biases)
+		self._prev_read = torch.sum(self._memory * read_key.view([self._memory_length, 1]), dim=0)
+		self._memory = self._memory * (1 - write_key).view([self._memory_length, 1]) + \
+				(write_key.view([self._memory_length, 1]) * write_vector.view([1, self._memory_width])) 
 		return out
+
+	def reset(self):
+		scale_factor = .1
+		self._memory = Variable(scale_factor * torch.randn([self._memory_length, self._memory_width]))
+		self._prev_read = Variable(scale_factor * torch.randn([self._memory_width]))
 
